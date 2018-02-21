@@ -10,18 +10,14 @@ import Foundation
 import SocketRocket
 
 open class LiveGQL: NSObject {
-    private(set) var socket: SRWebSocket
+    fileprivate var socket: SRWebSocket
     public weak var delegate: LiveGQLDelegate?
     fileprivate var queue: [String] = []
     public var verbose = false
     fileprivate var reconnect = false
     fileprivate var params: [String: Any]?
-    fileprivate var stateConnect = false {
-        didSet {
-            self.initServer(connectionParams: self.params, reconnect: self.reconnect)
-        }
-    }
-
+    fileprivate let socketUrl:URL
+    fileprivate let socketParams:[String]
     
     /// This function init the socket server with a default protocol "graphql-subscriptions"
     ///
@@ -29,6 +25,8 @@ open class LiveGQL: NSObject {
     ///   - url: the url of your websocket (mandatory)
     ///   - graphql: the protocol you want to use (optional)
     public required init(socket url: String, protocol graphql: String = "graphql-subscriptions") {
+        self.socketUrl = URL(string: url)!
+        self.socketParams = [graphql]
         socket = SRWebSocket(url: URL(string: url)!, protocols: [graphql])
         super.init()
         socket.delegate = self
@@ -179,15 +177,19 @@ open class LiveGQL: NSObject {
             print("Error while send message")
         }
     }
-
+    
     
     /// Send raw message to the server
     ///
     /// - Parameter message: string message to send
     fileprivate func sendRaw(_ message: String) {
-        socket.readyState == SRReadyState.OPEN ? socket.send(message) : queue.append(message)
+        if socket.readyState == SRReadyState.OPEN  {
+            socket.send(message)
+        } else {
+            queue.append(message)
+        }
     }
-
+    
     
     /// Get the state of the connection
     ///
@@ -206,7 +208,6 @@ open class LiveGQL: NSObject {
 // MARK: - SRWebSocket implementation
 extension LiveGQL: SRWebSocketDelegate {
     public func webSocketDidOpen(_: SRWebSocket!) {
-        stateConnect = true
         if queue.isEmpty {
             return
         }
@@ -215,13 +216,24 @@ extension LiveGQL: SRWebSocketDelegate {
     }
 
     public func webSocket(_: SRWebSocket!, didCloseWithCode _: Int, reason _: String!, wasClean _: Bool) {
+        print("reconnecting")
         if reconnect {
-            socket.open()
+            let queueDump = self.queue
+            self.queue = []
+            self.socket = SRWebSocket(url: self.socketUrl, protocols: self.socketParams)
+            self.socket.delegate = self
+            self.socket.open()
+            self.initServer(connectionParams: nil, reconnect: nil)
+            self.queue.append(contentsOf: queueDump)
         }
     }
 
     public func webSocket(_: SRWebSocket!, didReceiveMessage message: Any!) {
         serverMessageHandler(String(describing: message!))
+    }
+    
+    public func webSocket(_ webSocket: SRWebSocket!, didFailWithError error: Error!) {
+        print(error)
     }
 }
 
